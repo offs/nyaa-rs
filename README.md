@@ -16,6 +16,9 @@ cd nyaa-rs
 cargo install --path .
 ```
 
+> make sure `~/.cargo/bin` is in your `PATH`.
+
+
 ## config
 
 theme: `~/.config/nyaa/theme.json`
