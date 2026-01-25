@@ -37,20 +37,20 @@ fn render_search(f: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         InputMode::Editing => (theme.border_focus, Style::default().fg(theme.primary)),
     };
 
-    let content = app.search.input.clone();
-
-    let input = Paragraph::new(content).style(text_style).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(border_color))
-            .title(" search ")
-            .title_style(
-                Style::default()
-                    .fg(theme.primary)
-                    .add_modifier(Modifier::BOLD),
-            ),
-    );
+    let input = Paragraph::new(app.search.input.as_str())
+        .style(text_style)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(border_color))
+                .title(" search ")
+                .title_style(
+                    Style::default()
+                        .fg(theme.primary)
+                        .add_modifier(Modifier::BOLD),
+                ),
+        );
     f.render_widget(input, area);
 }
 
@@ -70,7 +70,7 @@ fn render_table(f: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
     });
 
     let header = Row::new(header_cells).height(1).bottom_margin(1);
-    
+
     let fixed_width = DATE_WIDTH + SIZE_WIDTH + SEEDERS_WIDTH + DOWNLOADS_WIDTH;
     let title_width = area
         .width
@@ -79,21 +79,15 @@ fn render_table(f: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
         .saturating_sub(SPACERS) as usize;
     let title_width = title_width.max(10);
 
+    let selected_idx = app.table.state.selected();
     let rows = app.table.results.iter().enumerate().map(|(i, item)| {
-        let is_selected = app.table.state.selected() == Some(i);
-
-        let title_content = marquee(
-            &item.title,
-            title_width,
-            app.animation_tick,
-            is_selected
-        );
-        let size_content = item.size.clone();
+        let is_selected = selected_idx == Some(i);
+        let title_content = marquee(&item.title, title_width, app.animation_tick, is_selected);
 
         let cells = vec![
-            Cell::from(item.date.clone()),
+            Cell::from(item.date.as_str()),
             Cell::from(title_content).style(Style::default().add_modifier(Modifier::BOLD)),
-            Cell::from(size_content),
+            Cell::from(item.size.as_str()),
             Cell::from(format!("{} / {}", item.seeders, item.leechers)),
             Cell::from(item.downloads.to_string()),
         ];
@@ -138,10 +132,8 @@ fn render_table(f: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
 }
 
 fn marquee(text: &str, width: usize, tick: usize, is_selected: bool) -> String {
-    if text.chars().count() <= width {
-        return text.to_string();
-    }
-    if !is_selected {
+    let char_count = text.chars().count();
+    if char_count <= width || !is_selected {
         return text.to_string();
     }
 
@@ -150,19 +142,16 @@ fn marquee(text: &str, width: usize, tick: usize, is_selected: bool) -> String {
         return text.to_string();
     }
 
-    let scroll_offset = tick - DELAY_TICKS;
-    let mut full_text = format!("{}   {}", text, text);
-    while full_text.chars().count() < width * 2 {
-        full_text.push_str("   ");
-        full_text.push_str(text);
-    }
+    const SEPARATOR: &str = "   ";
+    let cycle_len = char_count + SEPARATOR.len();
+    let start = (tick - DELAY_TICKS) % cycle_len;
 
-    let chars: Vec<char> = full_text.chars().collect();
-    let cycle_len = text.chars().count() + 3; 
-    let start = scroll_offset % cycle_len;
-
-    let slice: String = chars.iter().skip(start).take(width).collect();
-    slice
+    text.chars()
+        .chain(SEPARATOR.chars())
+        .cycle()
+        .skip(start)
+        .take(width)
+        .collect()
 }
 
 fn render_footer(f: &mut Frame, app: &App, area: Rect, theme: &Theme) {

@@ -1,4 +1,3 @@
-
 use ratatui::style::Color;
 use serde::Deserialize;
 use std::fs;
@@ -25,8 +24,8 @@ pub struct Theme {
     pub border_focus: Color,
 }
 
-impl Theme {
-    pub fn new() -> Self {
+impl Default for Theme {
+    fn default() -> Self {
         Self {
             fg: Color::Reset,
             primary: Color::Blue,
@@ -36,30 +35,26 @@ impl Theme {
             border_focus: Color::Blue,
         }
     }
+}
 
-
-
+impl Theme {
     pub fn load() -> (Self, Option<SystemTime>) {
-        if let Some(config_path) = Self::get_config_path() {
-            return Self::load_from_path(&config_path);
+        match Self::get_config_path() {
+            Some(path) => Self::load_from_path(&path),
+            None => (Self::default(), None),
         }
-        (Self::new(), None)
     }
 
     pub fn load_from_path(path: &PathBuf) -> (Self, Option<SystemTime>) {
-        if path.exists() {
-            let modified = fs::metadata(path)
-                .and_then(|m| m.modified())
-                .ok();
+        let modified = fs::metadata(path).and_then(|m| m.modified()).ok();
 
-            if let Some(config) = fs::read_to_string(path)
-                .ok()
-                .and_then(|c| serde_json::from_str::<ThemeConfig>(&c).ok())
-            {
-                return (Self::from_config(config), modified);
-            }
-        }
-        (Self::new(), None)
+        let theme = fs::read_to_string(path)
+            .ok()
+            .and_then(|c| serde_json::from_str::<ThemeConfig>(&c).ok())
+            .map(Self::from_config)
+            .unwrap_or_default();
+
+        (theme, modified)
     }
 
     pub fn path() -> Option<PathBuf> {
@@ -67,24 +62,21 @@ impl Theme {
     }
 
     fn get_config_path() -> Option<PathBuf> {
-        if let Ok(cwd) = std::env::current_dir() {
-            let path = cwd.join("theme.json");
-            if path.exists() {
-                return Some(path);
-            }
-        }
-
-        if let Some(path) = std::env::current_exe()
+        std::env::current_dir()
             .ok()
-            .and_then(|p| p.parent().map(|d| d.join("theme.json")))
+            .map(|cwd| cwd.join("theme.json"))
             .filter(|p| p.exists())
-        {
-            return Some(path);
-        }
-
-        directories::ProjectDirs::from("com", "nyaa-rs", "nyaa").map(|proj_dirs| {
-            proj_dirs.config_dir().join("theme.json")
-        })
+            .or_else(|| {
+                std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|d| d.join("theme.json")))
+                    .filter(|p| p.exists())
+            })
+            .or_else(|| {
+                directories::ProjectDirs::from("com", "nyaa-rs", "nyaa")
+                    .map(|proj| proj.config_dir().join("theme.json"))
+                    .filter(|p| p.exists())
+            })
     }
 
     fn from_config(config: ThemeConfig) -> Self {

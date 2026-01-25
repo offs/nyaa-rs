@@ -1,7 +1,9 @@
+use std::sync::OnceLock;
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use reqwest::Client as HttpClient;
 use scraper::{ElementRef, Html, Selector};
-use std::sync::OnceLock;
 
 use crate::model::{Category, Sort, Torrent};
 
@@ -15,18 +17,28 @@ static SEEDERS_SELECTOR: OnceLock<Selector> = OnceLock::new();
 static LEECHERS_SELECTOR: OnceLock<Selector> = OnceLock::new();
 static DOWNLOADS_SELECTOR: OnceLock<Selector> = OnceLock::new();
 
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const BASE_URL: &str = "https://nyaa.si";
+
 #[derive(Debug, Clone)]
 pub struct Client {
     http: HttpClient,
-    base_url: String,
+}
+
+impl Default for Client {
+    fn default() -> Self {
+        Self {
+            http: HttpClient::builder()
+                .timeout(REQUEST_TIMEOUT)
+                .build()
+                .unwrap_or_default(),
+        }
+    }
 }
 
 impl Client {
     pub fn new() -> Self {
-        Self {
-            http: HttpClient::new(),
-            base_url: "https://nyaa.si".to_string(),
-        }
+        Self::default()
     }
 
     pub async fn search(
@@ -36,47 +48,55 @@ impl Client {
         sort: Sort,
         page: u32,
     ) -> Result<Vec<Torrent>> {
-        let url = format!(
-            "{}/?f=0&c={}&q={}&s={}&o=desc&p={}",
-            self.base_url, category, query, sort, page
-        );
+        let encoded_query = urlencoding::encode(query);
+        let url =
+            format!("{BASE_URL}/?f=0&c={category}&q={encoded_query}&s={sort}&o=desc&p={page}");
         let response = self.http.get(&url).send().await?.text().await?;
 
-        let base_url = self.base_url.clone();
-        tokio::task::spawn_blocking(move || extract(&response, &base_url)).await?
+        tokio::task::spawn_blocking(move || extract(&response)).await?
     }
 }
 
-fn extract(html: &str, base_url: &str) -> Result<Vec<Torrent>> {
+fn extract(html: &str) -> Result<Vec<Torrent>> {
     let document = Html::parse_document(html);
     let selector = ITEM_SELECTOR.get_or_init(|| Selector::parse("table>tbody>tr").unwrap());
 
-    let mut res_vec = Vec::new();
-
-    for item in document.select(selector) {
-        if let Ok(torrent) = extract_torrent(item, base_url) {
-            res_vec.push(torrent);
-        }
-    }
-
-    Ok(res_vec)
+    document
+        .select(selector)
+        .filter_map(|item| extract_torrent(item).ok())
+        .collect::<Vec<_>>()
+        .pipe(Ok)
 }
 
-fn extract_torrent(item: ElementRef, base_url: &str) -> Result<Torrent> {
+impl<T> Pipe for T {}
+
+trait Pipe: Sized {
+    fn pipe<F, R>(self, f: F) -> R
+    where
+        F: FnOnce(Self) -> R,
+    {
+        f(self)
+    }
+}
+
+fn extract_torrent(item: ElementRef) -> Result<Torrent> {
     let title = extract_text(
         item,
-        TITLE_SELECTOR.get_or_init(|| Selector::parse("td:nth-of-type(2)>a:not(.comments)").unwrap()),
+        TITLE_SELECTOR
+            .get_or_init(|| Selector::parse("td:nth-of-type(2)>a:not(.comments)").unwrap()),
     )?;
 
-    let link_sel = LINK_SELECTOR.get_or_init(|| Selector::parse("td:nth-of-type(3)>a:first-child").unwrap());
+    let link_sel =
+        LINK_SELECTOR.get_or_init(|| Selector::parse("td:nth-of-type(3)>a:first-child").unwrap());
     let link_path = item
         .select(link_sel)
         .next()
         .and_then(|el| el.value().attr("href"))
         .context("link not found")?;
-    let link = format!("{}{}", base_url, link_path);
+    let link = format!("{BASE_URL}{link_path}");
 
-    let magnet_sel = MAGNET_SELECTOR.get_or_init(|| Selector::parse("td:nth-of-type(3)>a:nth-child(2)").unwrap());
+    let magnet_sel = MAGNET_SELECTOR
+        .get_or_init(|| Selector::parse("td:nth-of-type(3)>a:nth-child(2)").unwrap());
     let magnet_url = item
         .select(magnet_sel)
         .next()
@@ -88,7 +108,7 @@ fn extract_torrent(item: ElementRef, base_url: &str) -> Result<Torrent> {
         item,
         SIZE_SELECTOR.get_or_init(|| Selector::parse("td:nth-of-type(4)").unwrap()),
     )?;
-    
+
     let mut date = extract_text(
         item,
         DATE_SELECTOR.get_or_init(|| Selector::parse("td:nth-of-type(5)").unwrap()),

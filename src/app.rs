@@ -101,8 +101,8 @@ pub struct App {
     pub theme_path: Option<PathBuf>,
 }
 
-impl App {
-    pub fn new() -> Self {
+impl Default for App {
+    fn default() -> Self {
         let (theme, theme_last_modified) = Theme::load();
         let theme_path = Theme::path();
         Self {
@@ -115,6 +115,12 @@ impl App {
             theme_last_modified,
             theme_path,
         }
+    }
+}
+
+impl App {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub async fn handle_key_event(&mut self, key: KeyEvent) {
@@ -173,20 +179,20 @@ impl App {
         self.animation_tick = self.animation_tick.wrapping_add(1);
 
         if self.animation_tick.is_multiple_of(5) {
-             if let Some(path) = &self.theme_path {
-                 if std::fs::metadata(path)
+            if let Some(path) = &self.theme_path {
+                if std::fs::metadata(path)
                     .and_then(|m| m.modified())
                     .ok()
                     .filter(|&m| Some(m) != self.theme_last_modified)
                     .is_some()
-                 {
-                     let (new_theme, new_modified) = Theme::load_from_path(path);
-                     self.theme = new_theme;
-                     self.theme_last_modified = new_modified;
-                 }
-             } else if self.animation_tick.is_multiple_of(30) {
-                 self.theme_path = Theme::path();
-             }
+                {
+                    let (new_theme, new_modified) = Theme::load_from_path(path);
+                    self.theme = new_theme;
+                    self.theme_last_modified = new_modified;
+                }
+            } else if self.animation_tick.is_multiple_of(30) {
+                self.theme_path = Theme::path();
+            }
         }
     }
 
@@ -206,16 +212,7 @@ impl App {
         let sort = self.table.current_sort;
         let page = self.table.current_page;
 
-        match self
-            .client
-            .search(
-                &query,
-                Category::All,
-                sort,
-                page,
-            )
-            .await
-        {
+        match self.client.search(&query, Category::All, sort, page).await {
             Ok(torrents) => {
                 self.table.results = torrents;
                 self.table.state.select(Some(0));
@@ -252,13 +249,18 @@ impl App {
             Sort::Size => Sort::Date,
         };
         self.table.current_page = 1;
-        self.perform_search().await;
+        if !self.search.input.trim().is_empty() {
+            self.perform_search().await;
+        }
     }
 
     pub fn open_magnet(&self) {
-        if let Some(torrent) = self.table.state.selected()
+        if let Some(torrent) = self
+            .table
+            .state
+            .selected()
             .and_then(|i| self.table.results.get(i))
-            .filter(|t| !t.magnet_url.is_empty()) 
+            .filter(|t| !t.magnet_url.is_empty())
         {
             let _ = open::that(&torrent.magnet_url);
         }
